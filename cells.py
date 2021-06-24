@@ -171,7 +171,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
     v1_y = 20
     pad_yoffset = idt_extent[1][1]+pad_extent[1][0]+pad_tapery+ v1_y
     if idt_type == IDT_Type.FOCUSED:
-        pad_xoffset = (g_idt/2 + n_idt*lmda)*np.cos(theta*np.pi/360) - n_idt*lmda/2
+        pad_xoffset = (g_idt/2 + n_idt*lmda)*np.cos(theta*np.pi/360) - n_idt*lmda/2 - w_b*np.sin(theta*np.pi/360)
     else:
         pad_xoffset = idt_offset
     for (i, j) in [(-1, 1), (1, -1)]:
@@ -248,8 +248,9 @@ def idt_reflector(lib, layers, w_idt, s_idt, l_idt, n_idt, w_b):
     return r
 
 
-def focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b, label='focIDT'):
+def focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b, label='focIDT', pad_contact=True):
     cellname = label+f'_wIDT{w_idt}_sIDT{s_idt}_nIDT{n_idt:.1f}_theta{theta:0.1f}_(g_idt{g_idt:0.1f}_wb{w_b:.1f}_sb{s_b:.1f}'
+    ang = theta * np.pi / 360  # half angle, radians
     try:
         c = lib.new_cell(cellname)
     except ValueError:
@@ -257,32 +258,35 @@ def focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b, l
 
     for i in range(n_idt):
         xoff = i*2*(w_idt+s_idt)
-        f1 = gd.Round((0, 0), g_idt/2+xoff+w_idt, g_idt/2+xoff, -theta*np.pi/360, theta*np.pi/360, layer=layers['M1'])
-        sb1 = gd.Rectangle((s_b, 0), (g_idt/2+n_idt*2*(w_idt+s_idt), -s_b), layers['M1']).rotate(theta * np.pi / 360)
+        f1 = gd.Round((0, 0), g_idt/2+xoff+w_idt, g_idt/2+xoff, -ang, ang, layer=layers['M1'])
+        sb1 = gd.Rectangle((s_b, 0), (g_idt/2+n_idt*2*(w_idt+s_idt), -s_b), layers['M1']).rotate(ang)
         c.add(gd.boolean(f1, sb1, 'not', layer=layers['M1']))
 
-        f2 = gd.Round((0, 0), g_idt/2+xoff+2*w_idt+s_idt, g_idt/2+xoff+w_idt+s_idt, -theta*np.pi/360, theta*np.pi/360, layer=layers['M1'])
-        sb2 = gd.Rectangle((s_b, 0), (g_idt / 2 + n_idt * 2 * (w_idt + s_idt),s_b), layers['M1']).rotate(-theta * np.pi / 360)
+        f2 = gd.Round((0, 0), g_idt/2+xoff+2*w_idt+s_idt, g_idt/2+xoff+w_idt+s_idt, -ang, ang, layer=layers['M1'])
+        sb2 = gd.Rectangle((s_b, 0), (g_idt / 2 + n_idt * 2 * (w_idt + s_idt),s_b), layers['M1']).rotate(-ang)
         c.add(gd.boolean(f2, sb2, 'not', layer=layers['M1']))
         # c.add(gd.Rectangle((xoff, -l_idt/2), (xoff+w_idt, l_idt/2-s_b), layers['M1']))
         # c.add(gd.Rectangle((xoff+w_idt+s_idt, -l_idt / 2+s_b), (xoff+2*w_idt+s_idt, l_idt/2), layers['M1']))
     outer_r = g_idt / 2 + n_idt * 2 * (w_idt + s_idt) - s_idt
-    c.add(gd.Rectangle((g_idt/2-outer_r*(1-np.cos(theta*np.pi/360)), outer_r*np.sin(theta * np.pi / 360)),
-                       (outer_r*np.cos(theta*np.pi/360), outer_r*np.sin(theta * np.pi / 360)+w_b),
-                       layers['M1']))
-    c.add(gd.Rectangle((g_idt / 2-outer_r*(1-np.cos(theta*np.pi/360)), -outer_r*np.sin(theta * np.pi / 360)),
-                       (outer_r*np.cos(theta*np.pi/360), -(outer_r*np.sin(theta * np.pi / 360)+w_b)),
-                        layers['M1']))
-    c.add(gd.Round(center=(outer_r*np.cos(theta * np.pi / 360), outer_r*np.sin(theta * np.pi / 360)),
-                   radius=outer_r-g_idt/2,
-                   initial_angle=np.pi,
-                   final_angle=np.pi + theta * np.pi / 360,
-                   layer=layers['M1']))
-    c.add(gd.Round(center=(outer_r*np.cos(theta * np.pi / 360), -outer_r*np.sin(theta * np.pi / 360)),
-                   radius=outer_r-g_idt/2,
-                   initial_angle=np.pi,
-                   final_angle=np.pi - theta * np.pi / 360,
-                   layer=layers['M1']))
+    # c.add(gd.Rectangle((g_idt/2-outer_r*(1-np.cos(ang)), outer_r*np.sin(ang)),
+    #                    (outer_r*np.cos(ang), outer_r*np.sin(ang)+w_b),
+    #                    layers['M1']))
+    # c.add(gd.Rectangle((g_idt / 2-outer_r*(1-np.cos(ang)), -outer_r*np.sin(ang)),
+    #                    (outer_r*np.cos(ang), -(outer_r*np.sin(ang)+w_b)),
+    #                     layers['M1']))
+    c.add(gd.Rectangle((g_idt/2, 0), (outer_r, w_b), layer=layers['M1']).rotate(ang))
+    c.add(gd.Rectangle((g_idt / 2, 0), (outer_r, -w_b), layer=layers['M1']).rotate(-ang))
+    if pad_contact:
+        c.add(gd.Round(center=(outer_r*np.cos(ang)-w_b*np.sin(ang), outer_r*np.sin(ang)+w_b*np.cos(ang)),
+                       radius=outer_r-g_idt/2,
+                       initial_angle=np.pi,
+                       final_angle=np.pi + ang,
+                       layer=layers['M1']))
+        c.add(gd.Round(center=(outer_r*np.cos(ang)-w_b*np.sin(ang), -(outer_r*np.sin(ang)+w_b*np.cos(ang))),
+                       radius=outer_r-g_idt/2,
+                       initial_angle=np.pi,
+                       final_angle=np.pi - ang,
+                       layer=layers['M1']))
     # idt_extents = c.get_bounding_box()
     # c.add(gd.Rectangle((idt_extents[0][0], idt_extents[1][1]),
     #                    (idt_extents[1][0], idt_extents[1][1]+w_b),
@@ -295,7 +299,7 @@ def focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b, l
 
 
 def focused_idt_reflector(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, label='focIDT_reflector'):
-    return focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b=0, label=label)
+    return focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b=0, label=label, pad_contact=False)
 
 
 def ewc_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b):
@@ -382,8 +386,16 @@ layers = {
 
 pads = gsg_pad(lib, layers)
 #bar_resonator_matrix(lib, pads, layers, ds, ys, trench=True)
+
+test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=IDT_Type.STANDARD, l_idt=50,
+                      reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
+test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=IDT_Type.FOCUSED, l_idt=50,
+                      reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
 for i in IDT_Type:
-    test_idt = idt_device(lib, pads, layers, 1, g_idt=100, idt_type=i, l_idt=100, reflector=True, g_r=.25, w_br=5, n_idtr=50, theta=60)
+    # test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
+    #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
+    test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
+                          reflector=False, g_r=.25, w_br=5, n_idtr=50, theta=60)
 #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
 gd.LayoutViewer(lib)
 
