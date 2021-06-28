@@ -13,7 +13,7 @@ class IDT_Type(Enum):
 
 
 def gsg_pad(lib, layers=[0,1], p=150, x=80, y=70, connect_grounds=False):
-    c = lib.new_cell(f'GSG_pad_P{p}_x{x}_y{y}')
+    c = lib.new_cell(f'GSG_pad_P{p}_x{x}_y{y}_tiedGnd{connect_grounds}')
     #  signal pad
     c.add(gd.Rectangle((-x/2, -y/2), (x/2, y/2), layer=layers['M2']))
     # rt = gd.Polygon([(x/2, -y/2),(x/2+40, -y/2+10),(x/2+40, y/2-10),(x/2, y/2)])
@@ -97,40 +97,50 @@ def bar_resonator_matrix(lib, pads, layers, ds, ys, trench=False):
 
 
 def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_idt: float, idt_type: IDT_Type=IDT_Type.STANDARD,
-               process_bias: float=0, n_idt: int=20, w_b: float=20, s_b: float=1, l_idt: float=None,
+               process_bias: float=0, n_idt: int=20, w_b: float=5, s_b: float=1, l_idt: float=None,
                reflector: bool=False, g_r: float=None, w_br: float=None, n_idtr: int=None, w_r: float=None,
-               s_r: float=None, theta: float=None) -> gd.Cell:
+               s_r: float=None, theta: float=None, cell_prefix='') -> gd.Cell:
 
+    pad_tapery = 50  # offset distance for tapering from pad edge to IDT busbar
+    v1_y = 10
+    M2_OVERLAP = 1
     dev_x_extent = 0
+    cell_name = cell_prefix
     # Parameter Setup
     if l_idt is None:
         l_idt = 100*lmda
     if idt_type == IDT_Type.STANDARD:
-        cell_name = 'dIDT'
+        cell_name = cell_name+'dIDT'
         w_idt = lmda / 4 + process_bias
         s_idt = lmda / 4 - process_bias
         idts = idt_cell(lib, layers, w_idt, s_idt, l_idt, n_idt, w_b, s_b)
+        bb_offset = s_idt
     elif idt_type == IDT_Type.EWC:
         if process_bias != 0:
             raise NotImplementedError("Process bias not implemented for SPUDT devices")
-        cell_name = 'dEWC'
+        cell_name = cell_name+'dEWC'
         idts = ewc_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b)
+        bb_offset = 3*lmda/16
     elif idt_type == IDT_Type.SPLIT_FINGER:
-        cell_name = 'dSplitFing'
+        cell_name = cell_name+'dSplitFing'
         idts = split_finger_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b)
+        bb_offset = lmda/8
     elif idt_type == IDT_Type.DART:
         if process_bias != 0:
             raise NotImplementedError("Process bias not implemented for SPUDT devices")
-        cell_name = 'dDART'
+        cell_name = cell_name+'dDART'
         idts = dart_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b)
+        bb_offset = lmda/8
     elif idt_type == IDT_Type.FOCUSED:
         if theta is None:
             raise ValueError("No angle defined for focused IDT.")
         else:
-            cell_name = 'dFoc'
+            cell_name = cell_name+f'dFoc_thta{theta:.1f}'
             w_idt = lmda / 4 + process_bias
             s_idt = lmda / 4 - process_bias
             idts = focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b)
+            bb_offset = s_idt
+    text_label = cell_name + f'_lmbda{lmda:.1f}_g{g_idt:.1f}_nI{n_idt:.1f}_lI{l_idt:.1f}'
     cell_name = cell_name+f'_lambda{lmda:.1f}_g{g_idt:.1f}_nIDT{n_idt:.1f}_IDTl{l_idt:.1f}_wb{w_b:.1f}_sb{s_b:.1f}_bias{process_bias:.1f}'
     if reflector is True:
         if g_r is None: g_r = 5*lmda # TODO: Change default value based on simulated performance
@@ -139,7 +149,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
         if s_r is None: s_r = lmda / 4 - process_bias
         if n_idtr is None: n_idtr = n_idt
         cell_name = cell_name+f'_gr{g_r:.1f}_wr{w_r:.1f}_sr{s_r:.1f}_wbr{w_br:.1f}_nR{n_idtr:.1f}'
-
+        text_label = text_label+f'_gr{g_r:.1f}_nR{n_idtr:.1f}'
     # Cell Creation
     c = lib.new_cell(cell_name)
     idt_extent = idts.get_bounding_box()
@@ -152,7 +162,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
     dev_x_extent = idt_offset + idt_extent[1][0]
     if reflector is True:
         if idt_type == IDT_Type.FOCUSED:
-            r = focused_idt_reflector(lib, layers, w_r, s_r, theta, g_idt+2*(g_r+n_idt*lmda), n_idtr, w_br)
+            r = focused_idt_reflector(lib, layers, w_r, s_r, theta, g_idt+2*(g_r+n_idt*lmda-lmda/4), n_idtr, w_br)
             r_extent = gd.CellReference(r).get_bounding_box()
             r_offset = 0  # r_extent[0][0]
             dev_x_extent = r_extent[1][0]
@@ -165,10 +175,25 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
         c.add(gd.CellReference(r, origin=(-r_offset, 0), rotation=180))
 
 
+    # JOEL field rectangle to prevent stitching errors in IDT
+    cell_idt_extents = c.get_bounding_box()
+    if cell_idt_extents[1][1]-cell_idt_extents[1][0] + 2*(w_b+v1_y) < 980 and cell_idt_extents[0][1]-cell_idt_extents[0][0] < 980:
+        c.add(gd.Rectangle([cell_idt_extents[0][0]-5, cell_idt_extents[0][1]-5],
+                           [cell_idt_extents[1][0]+5, cell_idt_extents[1][1]+5],
+                           layers['JOEL_FIELD']))
+    elif idt_extent[1][1]-idt_extent[1][0] < 980 and idt_extent[0][1]-idt_extent[0][0] < 980:
+        c.add(gd.Rectangle([idt_extent[0][0]-5-idt_offset, idt_extent[0][1]-5 - (w_b+v1_y)],
+                           [idt_extent[1][0]+5-idt_offset, idt_extent[1][1]+5 + (w_b+v1_y)],
+                           layers['JOEL_FIELD']))
+        c.add(gd.Rectangle([idt_extent[0][0]-5+idt_offset, idt_extent[0][1]-5 - (w_b+v1_y)],
+                           [idt_extent[1][0]+5+idt_offset, idt_extent[1][1]+5 + (w_b+v1_y)],
+                           layers['JOEL_FIELD']))
+    else:
+        pass  # can't break IDT into one field.
+
     # generate pads
     pad_extent = pads.get_bounding_box()
-    pad_tapery = 50  # offset distance for tapering from pad edge to IDT busbar
-    v1_y = 20
+
     pad_yoffset = idt_extent[1][1]+pad_extent[1][0]+pad_tapery+ v1_y
     if idt_type == IDT_Type.FOCUSED:
         pad_xoffset = (g_idt/2 + n_idt*lmda)*np.cos(theta*np.pi/360) - n_idt*lmda/2 - w_b*np.sin(theta*np.pi/360)
@@ -179,16 +204,16 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
                                rotation=i*90,
                                origin=(i*pad_xoffset, j*pad_yoffset)))
         # signal connection to device
-        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2), j*(idt_extent[1][1] + v1_y)),
-                          (i*(pad_xoffset-34), j*(idt_extent[1][1] + v1_y+pad_tapery)),
-                          (i*(pad_xoffset+34), j*(idt_extent[1][1] + v1_y+pad_tapery)),
-                          (i*(pad_xoffset + n_idt*lmda/2), j*(idt_extent[1][1] + v1_y)),
+        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2- M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                          (i*(pad_xoffset-35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                          (i*(pad_xoffset+35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                          (i*(pad_xoffset + n_idt*lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
                           ], layers['M2']))
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2), j*(idt_extent[1][1] + v1_y)),
+        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2-M2_OVERLAP), j*(idt_extent[1][1])),
+                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
                            layers['M2']))
         c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2), j*(idt_extent[1][1] + v1_y)),
+                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), j*(idt_extent[1][1] + v1_y)),
                            layers['M1']))
 
         # ground pad to pad connections
@@ -204,19 +229,26 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
                            layers['M2']))
 
         # grounded idt taper connections
-        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2), -j*(idt_extent[1][1]+ v1_y)),
+        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
                           (-i*(pad_xoffset+pad_extent[0][1]+70), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
                           (-i*(pad_xoffset+pad_extent[0][1]), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
-                          (i*(pad_xoffset + n_idt*lmda/2), -j*(idt_extent[1][1]+ v1_y)),
+                          (i*(pad_xoffset + n_idt*lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
                           ], layers['M2']))
 
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), -j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2), -j*(idt_extent[1][1] + v1_y)),
+        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1])),
+                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1] + v1_y)),
                            layers['M2']))
         c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), -j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2), -j*(idt_extent[1][1] + v1_y)),
+                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), -j*(idt_extent[1][1] + v1_y)),
                            layers['M1']))
-    # bloat signal pad taper and subtract from ground routing to prevent shorting for small lengths with reflectors
+    # TODO: bloat signal pad taper and subtract from ground routing to prevent shorting for small lengths with reflectors?
+
+    # Cell label in M2
+    c.add(gd.Text(text_label,
+                  9,
+                  (-pad_xoffset-(pad_extent[1][1]-pad_extent[0][1])/2,
+                    pad_yoffset-pad_extent[0][0]+5),
+                  layer=layers['M2']))
 
     return c
 
@@ -381,23 +413,33 @@ layers = {
     'Trench': 0,
     'M1': 1,
     'M2': 2,
+    'JOEL_FIELD': 50
     }
 
 
 pads = gsg_pad(lib, layers)
+pads2 = gsg_pad(lib, layers, connect_grounds=True)
 #bar_resonator_matrix(lib, pads, layers, ds, ys, trench=True)
 
-test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=IDT_Type.STANDARD, l_idt=50,
-                      reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
-test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=IDT_Type.FOCUSED, l_idt=50,
-                      reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
-for i in IDT_Type:
-    # test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
-    #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
-    test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
-                          reflector=False, g_r=.25, w_br=5, n_idtr=50, theta=60)
-#focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
+lmda1 = 1.5
+g_idt1 = 100*lmda1
+l_idt1 = 50*lmda1
+g_r1 = lmda1/4
+
+prefixes = ['','g']
+for j,p in enumerate([pads,pads2]):
+
+    idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.STANDARD, l_idt=l_idt1, s_b=lmda1,
+                          reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
+    idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.FOCUSED, l_idt=l_idt1, s_b=lmda1,
+                          reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
+    for i in IDT_Type:
+        # test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
+        #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
+        idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=i, l_idt=l_idt1, s_b=lmda1,
+                              reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60, cell_prefix=prefixes[j])
+    #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
 gd.LayoutViewer(lib)
 
 #%%
-lib.write_gds('tweed.gds')
+lib.write_gds('test.gds')
