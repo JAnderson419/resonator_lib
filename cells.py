@@ -11,22 +11,28 @@ class IDT_Type(Enum):
     SPLIT_FINGER = 'split'
     FOCUSED = 'focused'
 
+class Bar_Type(Enum):
+    BAR = 'bar'
+    DISC = 'disc'
 
-def gsg_pad(lib, layers=[0,1], p=150, x=80, y=70, connect_grounds=False):
+
+
+def gsg_pad(lib, layer, p=150, x=80, y=70, connect_grounds=False):
     c = lib.new_cell(f'GSG_pad_P{p}_x{x}_y{y}_tiedGnd{connect_grounds}')
     #  signal pad
-    c.add(gd.Rectangle((-x/2, -y/2), (x/2, y/2), layer=layers['M2']))
+    c.add(gd.Rectangle((-x/2, -y/2), (x/2, y/2), layer=layer))
     # rt = gd.Polygon([(x/2, -y/2),(x/2+40, -y/2+10),(x/2+40, y/2-10),(x/2, y/2)])
 
     #  ground pads
-    c.add(gd.Rectangle((-x/2-20, -y/2-p), (x/2, y/2-p), layer=layers['M2']))
-    c.add(gd.Rectangle((-x/2-20, -y/2+p), (x/2, y/2+p), layer=layers['M2']))
+    c.add(gd.Rectangle((-x/2-20, -y/2-p), (x/2, y/2-p), layer=layer))
+    c.add(gd.Rectangle((-x/2-20, -y/2+p), (x/2, y/2+p), layer=layer))
 
     if connect_grounds:
-        c.add(gd.Rectangle((-x/2-40, -y/2-p), (-x/2-20, y/2+p), layer=layers['M2']))
+        c.add(gd.Rectangle((-x/2-40, -y/2-p), (-x/2-20, y/2+p), layer=layer))
     return c
 
-def bar_resonator(lib, pads, layers, d=150, x=30, y=200, yoff=40, trench=False):
+
+def bar_resonator(lib, pads, layers, d=150, x=30, y=200, yoff=40, r=0, trench=False, name=None, type=Bar_Type.BAR):
     """
 
     :param lib:
@@ -39,45 +45,93 @@ def bar_resonator(lib, pads, layers, d=150, x=30, y=200, yoff=40, trench=False):
     :param trench: bool, determines if resonator has a trench or not
     :return: c: bar resonator cell
     """
-    c = lib.new_cell(f'bar_res_d{d}_x{x}_y{y}')
-    c.add(gd.Rectangle((-d/2-x, -y/2-yoff), (-d/2, y/2), layers['M1']))
-    c.add(gd.Rectangle((d / 2, -y / 2), (d / 2 + x, y / 2+yoff), layers['M1']))
+    if name == None:
+        name = type.value+f'_res_d{d}_x{x}_y{y}'
+    if type == Bar_Type.DISC:
+        name = name+f'_r{r}'
+    c = lib.new_cell(name)
+
     pad_extent = gd.CellReference(pads).get_bounding_box()
     c.add(gd.CellReference(pads,
                            rotation=-90,
                            origin=(d / 2 + x/2, y / 2 + pad_extent[1][0]+30+yoff)))
-    c.add(gd.Polygon([(d / 2, y / 2+yoff),
-                      (d / 2 + (x-70)/2, y / 2 + 30+yoff),
-                      (d / 2 + x - (x-70)/2, y / 2+30+yoff),
-                      (d / 2 + x, y / 2+yoff)
-                      ], layers[1]))
     c.add(gd.CellReference(pads,
                            rotation=90,
                            origin=(-d / 2 - x / 2, -y / 2 - pad_extent[1][0]-30-yoff)))
-    c.add(gd.Polygon([(-d / 2, -y / 2-yoff),
-                      (-d / 2 - (x - 70) / 2, -y / 2 - 30-yoff),
-                      (-d / 2 - x + (x - 70) / 2, -y / 2 - 30-yoff),
-                      (-d / 2 - x, -y / 2-yoff)
-                      ], layers['M1']))
 
+    c.add(gd.Polygon([(pad_extent[0][1]+d/2+x/2, y/2+yoff+30),
+                      (pad_extent[0][1]+d/2+x/2+70, y/2+yoff+30),
+                      (pad_extent[0][1]-d/2-x/2+70, -y/2-yoff-30),
+                      (pad_extent[0][1]-d/2-x/2, -y/2-yoff-30),
+                      ], layers['M1']),)
+    c.add(gd.Polygon([(-pad_extent[0][1]+d/2+x/2, y/2+yoff+30),
+                      (-pad_extent[0][1]+d/2+x/2-70, y/2+yoff+30),
+                      (-pad_extent[0][1]-d/2-x/2-70, -y/2-yoff-30),
+                      (-pad_extent[0][1]-d/2-x/2, -y/2-yoff-30),
+                      ], layers['M1']),)
+
+    # Pad Tapers
+    c.add(gd.Polygon([(d / 2, y / 2+yoff),
+            (d / 2 + (x-70)/2, y / 2 + 30+yoff),
+            (d / 2 + x - (x-70)/2, y / 2+30+yoff),
+            (d / 2 + x, y / 2+yoff)
+            ], layers['M1']),)
+    c.add(gd.Polygon([(-d / 2, -y / 2-yoff),
+            (-d / 2 - (x - 70) / 2, -y / 2 - 30-yoff),
+            (-d / 2 - x + (x - 70) / 2, -y / 2 - 30-yoff),
+            (-d / 2 - x, -y / 2-yoff)
+            ], layers['M1']),)
+    if type == Bar_Type.DISC:
+        disc_cut = gd.Round((0, 0), radius=r, layer=layers['M1'])
+    else:
+        disc_cut = gd.Rectangle((0, 0), (0, 0), layer=layers['M1'])
+
+    c.add(gd.boolean(gd.Rectangle((-d/2-x, -y/2-yoff), (-d/2, y/2), layers['M1']),
+                     disc_cut,
+                     'not', layer=layers['M1']))
+    c.add(gd.boolean(gd.Rectangle((d / 2, -y / 2), (d / 2 + x, y / 2+yoff), layers['M1']),
+                     disc_cut,
+                     'not', layer=layers['M1']))
 
     if trench and d>10:
         c.add(gd.Rectangle((-d/2+5, -y/2-yoff/2), (d/2-5, y/2+yoff/2), layers['Trench']))
     extent = c.get_bounding_box()
-    c.add(gd.Text(f'bar_res_d{d}_x{x}_y{y}', 20, (extent[0][0], extent[1][1]+5), layers['M1']))
+    c.add(gd.Text(name, 20, (extent[0][0], extent[1][1]+5), layer=layers['M1']))
     return c
 
 
-def bar_resonator_matrix(lib, pads, layers, ds, ys, trench=False):
-    m = lib.new_cell(f'Resonator Matrix')
+def bar_resonator_matrix(lib, pads, layers, ds, xs, ys, rs, trench=False, name='Resonator Matrix', **kwargs):
+
+    m = lib.new_cell(name)
     max_x = 0
     max_y = 0
     cells = []
     x0 = []
     y0 = []
-    for i, d in enumerate(ds):
-        for j, y in enumerate(ys):
-            c = bar_resonator(lib, pads, layers, d=d, y=y, trench=trench)
+
+    # handles parsing of d,x,y,r to find two arrays to iterate over
+
+    pd, p2, p1i, p2i = [None]*4
+    p1 = np.empty(0)
+    p2 = np.empty(0)
+
+    ps = [None]*4
+    for i, p in enumerate([ds, xs, ys, rs]):
+        p = np.asarray(p)
+        if p.size == 1:
+            ps[i] = p
+        elif(p1.size == 0):
+            p1 = p
+            p1i = i
+        elif(p2.size == 0):
+            p2 = p
+            p2i = i
+        else:
+            raise ValueError("More than two series given.")
+
+    for i, ps[p1i] in enumerate(p1):
+        for j, ps[p2i] in enumerate(p2):
+            c = bar_resonator(lib, pads, layers, d=ps[0], x=ps[1], y=ps[2], r=ps[3], trench=trench, **kwargs)
             x0.append(i)
             y0.append(j)
             cells.append(c)
@@ -406,8 +460,9 @@ def alignment_marks(lib, layers):
 
 lib = gd.GdsLibrary('Resonator Library')
 gd.current_library = lib
-ds = np.linspace(10, 100, 7)
-ys = np.linspace(100, 200, 6)
+ds = [1, 1.5, 2, 2.5, 3, 5, 7, 10]
+ys = [20, 30, 40, 50]
+rs = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 
 layers = {
     'Trench': 0,
@@ -417,29 +472,29 @@ layers = {
     }
 
 
-pads = gsg_pad(lib, layers)
-pads2 = gsg_pad(lib, layers, connect_grounds=True)
-#bar_resonator_matrix(lib, pads, layers, ds, ys, trench=True)
-
+pads = gsg_pad(lib, layers['M1'])
+pads2 = gsg_pad(lib, layers['M2'], connect_grounds=True)
+bar_resonator_matrix(lib, pads, layers, ds=ds, xs=30, ys=ys, rs=0, trench=False, yoff=10, name='matrix1')
+bar_resonator_matrix(lib, pads, layers, rs=rs, ds=[1,2], xs=30, ys=10, yoff=4, type=Bar_Type.DISC, name='matrix2')
 lmda1 = 1.5
 g_idt1 = 100*lmda1
 l_idt1 = 50*lmda1
 g_r1 = lmda1/4
 
 prefixes = ['','g']
-for j,p in enumerate([pads,pads2]):
-
-    idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.STANDARD, l_idt=l_idt1, s_b=lmda1,
-                          reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
-    idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.FOCUSED, l_idt=l_idt1, s_b=lmda1,
-                          reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
-    for i in IDT_Type:
-        # test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
-        #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
-        idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=i, l_idt=l_idt1, s_b=lmda1,
-                              reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60, cell_prefix=prefixes[j])
-    #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
+# for j,p in enumerate([pads,pads2]):
+#
+#     idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.STANDARD, l_idt=l_idt1, s_b=lmda1,
+#                           reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
+#     idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.FOCUSED, l_idt=l_idt1, s_b=lmda1,
+#                           reflector=True, g_r=g_r1, w_br=3, n_idtr=25, theta=60, cell_prefix=prefixes[j])
+#     for i in IDT_Type:
+#         # test_idt = idt_device(lib, pads, layers, lmda=1, g_idt=100, idt_type=i, l_idt=50,
+#         #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
+#         idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=i, l_idt=l_idt1, s_b=lmda1,
+#                               reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60, cell_prefix=prefixes[j])
+#     #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
 gd.LayoutViewer(lib)
 
-#%%
+# %%
 lib.write_gds('test.gds')
