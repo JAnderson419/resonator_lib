@@ -17,18 +17,18 @@ class Bar_Type(Enum):
 
 
 
-def gsg_pad(lib, layer, p=150, x=80, y=70, connect_grounds=False):
-    c = lib.new_cell(f'GSG_pad_P{p}_x{x}_y{y}_tiedGnd{connect_grounds}')
+def gsg_pad(lib, layers, layer, p=150, x=80, y=70, connect_grounds=False):
+    c = lib.new_cell(f'GSG_pad_Layer{layer}_P{p}_x{x}_y{y}_tiedGnd{connect_grounds}')
     #  signal pad
-    c.add(gd.Rectangle((-x/2, -y/2), (x/2, y/2), layer=layer))
+    c.add(gd.Rectangle((-x/2, -y/2), (x/2, y/2), layer=layers[layer]))
     # rt = gd.Polygon([(x/2, -y/2),(x/2+40, -y/2+10),(x/2+40, y/2-10),(x/2, y/2)])
 
     #  ground pads
-    c.add(gd.Rectangle((-x/2-20, -y/2-p), (x/2, y/2-p), layer=layer))
-    c.add(gd.Rectangle((-x/2-20, -y/2+p), (x/2, y/2+p), layer=layer))
+    c.add(gd.Rectangle((-x/2-20, -y/2-p), (x/2, y/2-p), layer=layers[layer]))
+    c.add(gd.Rectangle((-x/2-20, -y/2+p), (x/2, y/2+p), layer=layers[layer]))
 
     if connect_grounds:
-        c.add(gd.Rectangle((-x/2-40, -y/2-p), (-x/2-20, y/2+p), layer=layer))
+        c.add(gd.Rectangle((-x/2-40, -y/2-p), (-x/2-20, y/2+p), layer=layers[layer]))
     return c
 
 
@@ -447,16 +447,67 @@ def split_finger_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b):
 
 
 # WIP
-def alignment_marks(lib, layers):
-    l = 60
-    t = 5
+def alignment_marks(lib, layers, layer, l=250, w=5, w2=5, cell_prefix=''):
+    '''
+    Create alignment cross mark.
+    5 x 250 recommended for JOEL 8100 PQRS.
+    5um width min for MLA150.
 
-    c = lib.new_cell(f'Alignment_Mark_Layer{layer}')
-    c.add(gd.Rectangle((-l -t/2), (-3*l/4, t/2)))
-    c.add(gd.Rectangle((-3*l/4, -t), (-l / 4, t)))
-    c.add(gd.Rectangle((-l / 4, -t / 2), (l / 4, t / 2)))
-    c.add(gd.Rectangle((l / 4, -t), (3*l / 4, t)))
-    c.add(gd.Rectangle((3*l / 4, - t / 2), (l, t / 2)))
+    :param lib: gdspy library in which to put cell
+    :param layers: layer dictionary for process
+    :param layer: name of layer to place mark on
+    :param l: length of marks
+    :param w: width of marks at center/tips
+    :param w2: width of marks in 1/8 to 3/8 region of length
+    :param cell_prefix:
+    :return: c: cell containing alignment mark
+    '''
+    #
+
+
+    c = lib.new_cell(cell_prefix+f'Alignment_Mark_Layer{layer}')
+    c.add(gd.Rectangle((-l/2, -w/2), (-3*l/8, w/2), layers[layer]))
+    c.add(gd.Rectangle((-3*l/8, -w2/2), (-l / 8,w2/2), layers[layer]))
+    c.add(gd.Rectangle((-l / 8, -w / 2), (l / 8, w / 2), layers[layer]))
+    c.add(gd.Rectangle((l / 8, -w2/2), (3*l / 8, w2/2), layers[layer]))
+    c.add(gd.Rectangle((3*l / 8, - w / 2), (l/2, w / 2), layers[layer]))
+
+    c.add(gd.Rectangle((-w/2, -l/2), (w/2, -3*l/8), layers[layer]))
+    c.add(gd.Rectangle(( -w2/2, -3*l/8), (w2/2, -l / 8), layers[layer]))
+    c.add(gd.Rectangle((-w / 2, -l / 8), (w / 2, l / 8), layers[layer]))
+    c.add(gd.Rectangle((-w2/2, l / 8), (w2/2, 3*l / 8), layers[layer]))
+    c.add(gd.Rectangle((- w / 2, 3*l / 8), ( w / 2, l/2), layers[layer]))
+    return c
+
+def alignment_array(lib, layers, layer, nrow=9, ncol=9, wafer_diameter=None, s_major=10000):
+    #TODO: Implemnent wafer_diameter
+    c = lib.new_cell(f'Alignment_Mark_Array{layer}')
+    m = alignment_marks(lib, layers, layer)
+
+    # c.add(gd.CellArray(m, ncol, nrow, s_major,
+    #                    origin=(-(s_major-1)/2*ncol, -(s_major-1)/2*nrow)))
+    objs = []
+    for g,x in enumerate(np.linspace(-(ncol-1)/2*s_major, (ncol-1)/2*s_major, ncol)):
+        for h,y in enumerate(np.linspace(-(nrow-1)/2*s_major, (nrow-1)/2*s_major, nrow)):
+            objs.append(gd.CellReference(m, origin=(x, y)))
+            objs.append(gd.Text(f'{round(x/1000)},{round(y/1000)}',
+                          size=50,
+                          position=(x+175, y+175),
+                          layer=layers[layer]))
+            if (g == ncol-1) or (h == nrow-1):
+                continue
+            else:
+                for i in np.linspace(0,9,5):
+                    for j in np.linspace(0,9,5):
+                        objs.append(gd.Rectangle((x+(i/10)*s_major-3, y+(j/10)*s_major-3),
+                                           (x+(i/10)*s_major+3, y+(j/10)*s_major+3),
+                                           layers[layer]))
+    if wafer_diameter:
+        maxdim = wafer_diameter-10500  # 10mm exclusion for wafer edge
+        c.add(gd.boolean(objs, gd.Round((0, 0), maxdim/2), 'and', layer=layers[layer]))
+    else:
+        c.add(objs)
+    return c
 
 lib = gd.GdsLibrary('Resonator Library')
 gd.current_library = lib
@@ -468,20 +519,23 @@ layers = {
     'Trench': 0,
     'M1': 1,
     'M2': 2,
-    'JOEL_FIELD': 50
+    'JOEL_FIELD': 50,
+    'M0': 11
     }
 
 
-pads = gsg_pad(lib, layers['M1'])
-pads2 = gsg_pad(lib, layers['M2'], connect_grounds=True)
-bar_resonator_matrix(lib, pads, layers, ds=ds, xs=30, ys=ys, rs=0, trench=False, yoff=10, name='matrix1')
-bar_resonator_matrix(lib, pads, layers, rs=rs, ds=[1,2], xs=30, ys=10, yoff=4, type=Bar_Type.DISC, name='matrix2')
+pads = gsg_pad(lib, layers, 'M1')
+pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
+# bar_resonator_matrix(lib, pads, layers, ds=ds, xs=30, ys=ys, rs=0, trench=False, yoff=10, name='matrix1')
+# bar_resonator_matrix(lib, pads, layers, rs=rs, ds=[1,2], xs=30, ys=10, yoff=4, type=Bar_Type.DISC, name='matrix2')
+
+# test devices
 lmda1 = 1.5
 g_idt1 = 100*lmda1
 l_idt1 = 50*lmda1
 g_r1 = lmda1/4
 
-prefixes = ['','g']
+# prefixes = ['','g']
 # for j,p in enumerate([pads,pads2]):
 #
 #     idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=IDT_Type.STANDARD, l_idt=l_idt1, s_b=lmda1,
@@ -494,7 +548,21 @@ prefixes = ['','g']
 #         idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=i, l_idt=l_idt1, s_b=lmda1,
 #                               reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60, cell_prefix=prefixes[j])
 #     #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
-gd.LayoutViewer(lib)
+# gd.LayoutViewer(lib)
 
 # %%
+
 lib.write_gds('test.gds')
+# %%
+#
+# lmbdas = 1E-3*np.array([50, 75, 100, 125, 150, 175, 200, 225, 250])
+# pad3 = gsg_pad(lib, layers, 'M2')
+marks = alignment_array(lib, layers, 'M0', wafer_diameter=100000)
+# for l in lmbdas:
+#     idt_device(lib, pad3, layers, lmda=l, g_idt=100*l,
+#                idt_type=IDT_Type.STANDARD,
+#                l_idt=50*l,
+#                s_b=l,
+#                cell_prefix='')
+gd.LayoutViewer(lib)
+lib.write_gds('alignment_array.gds')
