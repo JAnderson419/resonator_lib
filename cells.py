@@ -153,14 +153,38 @@ def bar_resonator_matrix(lib, pads, layers, ds, xs, ys, rs, trench=False, name='
 def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_idt: float, idt_type: IDT_Type=IDT_Type.STANDARD,
                process_bias: float=0, n_idt: int=20, w_b: float=5, s_b: float=1, l_idt: float=None,
                reflector: bool=False, g_r: float=None, w_br: float=None, n_idtr: int=None, w_r: float=None,
-               s_r: float=None, theta: float=None, cell_prefix='') -> gd.Cell:
+               s_r: float=None, theta: float=None, pad_rot: bool=False, cell_prefix='') -> gd.Cell:
+    """
 
+    :param lib: gdspy library to add cells to
+    :param pads: probe pad set to use
+    :param layers: mask layer dictionary
+    :param lmda: Desired wavelength. IDT dimensions set by this and idt_type
+    :param g_idt: gap between two port IDT delay lines. Set to 0 for single port device.
+    :param idt_type: specifies normal lmda/4 IDT, SPUDT type, or focused IDT
+    :param process_bias: Standard IDTs only. Increases metal width & decreases space width to account for process bias.
+    :param n_idt: number of IDT fingers in a block
+    :param w_b: width of busbar
+    :param s_b: spacing from end of idt to busbar (sets aperture with l_idt)
+    :param l_idt: length of IDTs
+    :param reflector: Toggles reflector on and off
+    :param g_r: gap from edge of IDT block to reflector
+    :param w_br: width reflector busbar
+    :param n_idtr: number of reflector IDTs
+    :param w_r: metal width of reflector IDTs
+    :param s_r: space width of reflector IDTs
+    :param theta: aperture angle for focused IDTs
+    :param pad_rot: toggles 90 degree pad rotation for single port IDTs
+    :param cell_prefix: text to add to front of cell name
+    :return: gdspy cell of IDT device
+    """
     pad_tapery = 50  # offset distance for tapering from pad edge to IDT busbar
     v1_y = 10
     M2_OVERLAP = 1
     dev_x_extent = 0
     cell_name = cell_prefix
-    # Parameter Setup
+
+    # Parameter Setup, idt creation
     if l_idt is None:
         l_idt = 100*lmda
     if idt_type == IDT_Type.STANDARD:
@@ -194,8 +218,9 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
             s_idt = lmda / 4 - process_bias
             idts = focused_idt_cell(lib, layers, w_idt, s_idt, theta, g_idt, n_idt, w_b, s_b)
             bb_offset = s_idt
-    text_label = cell_name + f'_lmbda{lmda:.1f}_g{g_idt:.1f}_nI{n_idt:.1f}_lI{l_idt:.1f}'
-    cell_name = cell_name+f'_lambda{lmda:.1f}_g{g_idt:.1f}_nIDT{n_idt:.1f}_IDTl{l_idt:.1f}_wb{w_b:.1f}_sb{s_b:.1f}_bias{process_bias:.1f}'
+
+    text_label = cell_name + f'_lmbda{lmda:.3f}_g{g_idt:.1f}_nI{n_idt:.1f}_lI{l_idt:.1f}'
+    cell_name = cell_name+f'_lambda{lmda:.3f}_g{g_idt:.1f}_nIDT{n_idt:.1f}_IDTl{l_idt:.1f}_wb{w_b:.1f}_sb{s_b:.1f}_bias{process_bias:.3f}'
     if reflector is True:
         if g_r is None: g_r = 5*lmda # TODO: Change default value based on simulated performance
         if w_br is None: w_br = w_b
@@ -204,6 +229,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
         if n_idtr is None: n_idtr = n_idt
         cell_name = cell_name+f'_gr{g_r:.1f}_wr{w_r:.1f}_sr{s_r:.1f}_wbr{w_br:.1f}_nR{n_idtr:.1f}'
         text_label = text_label+f'_gr{g_r:.1f}_nR{n_idtr:.1f}'
+
     # Cell Creation
     c = lib.new_cell(cell_name)
     idt_extent = idts.get_bounding_box()
@@ -211,8 +237,13 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
         idt_offset = 0  # cell extent goes to focal point
     else:
         idt_offset = g_idt/2 + idt_extent[1][0]
-    c.add(gd.CellReference(idts, origin=(-idt_offset, 0), rotation=180)) # rotation puts idt finger at gap edge
-    c.add(gd.CellReference(idts, origin=(idt_offset, 0), rotation=0))
+
+    if g_idt == 0:  # one-port IDT
+        idt_offset = (idt_extent[1][0] + idt_extent[0][0])/2
+        c.add(gd.CellReference(idts, origin=(-idt_offset, 0), rotation=0))
+    else:
+        c.add(gd.CellReference(idts, origin=(-idt_offset, 0), rotation=180)) # rotation puts idt finger at gap edge
+        c.add(gd.CellReference(idts, origin=(idt_offset, 0), rotation=0))
     dev_x_extent = idt_offset + idt_extent[1][0]
     if reflector is True:
         if idt_type == IDT_Type.FOCUSED:
@@ -253,62 +284,155 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float, g_i
         pad_xoffset = (g_idt/2 + n_idt*lmda)*np.cos(theta*np.pi/360) - n_idt*lmda/2 - w_b*np.sin(theta*np.pi/360)
     else:
         pad_xoffset = idt_offset
-    for (i, j) in [(-1, 1), (1, -1)]:
-        c.add(gd.CellReference(pads,
-                               rotation=i*90,
-                               origin=(i*pad_xoffset, j*pad_yoffset)))
-        # signal connection to device
-        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2- M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
-                          (i*(pad_xoffset-35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
-                          (i*(pad_xoffset+35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
-                          (i*(pad_xoffset + n_idt*lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
-                          ], layers['M2']))
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2-M2_OVERLAP), j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
-                           layers['M2']))
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), j*(idt_extent[1][1] + v1_y)),
-                           layers['M1']))
 
-        # ground pad to pad connections
-        if pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2-70 > dev_x_extent+5:
-            ground_x_offset = pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2
+
+    # Single Port IDTs
+    if g_idt ==0:
+
+        if pad_rot==True:
+
+            for (i, j) in [(-1, 1), (1, -1)]:
+                # signal connection to device
+                c.add(gd.Polygon([(i*(idt_extent[0][0]-idt_offset- M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                  (i*(pad_xoffset-10), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                                  (i*(pad_xoffset+10), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                                  (i*(idt_extent[1][0]-idt_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                  ], layers['M2']))
+                c.add(gd.Rectangle((i*(idt_extent[0][0]-idt_offset-M2_OVERLAP), j*(idt_extent[1][1])),
+                                   (i*(idt_extent[1][0]-idt_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                   layers['M2']))
+                c.add(gd.Rectangle((i*(idt_extent[0][0]-idt_offset), j*(idt_extent[1][1])),
+                                   (i*(idt_extent[1][0]-idt_offset), j*(idt_extent[1][1] + v1_y)),
+                                   layers['M1']))
+
+            pad_xoffset2 = -(pad_extent[1][0]+idt_extent[0][0]+200)
+            pad_yoffset2 = -pad_extent[1][1]+(idt_extent[1][1] + v1_y+pad_tapery)+70
+            c.add(gd.CellReference(pads,
+                                   rotation=0,
+                                   origin=(pad_xoffset2, pad_yoffset2)))
+            # Ground connection
+            c.add(gd.Polygon(
+                [((pad_xoffset2+pad_extent[1][0]), (idt_extent[1][1] + v1_y+pad_tapery+70)),
+                 ((pad_xoffset2+pad_extent[1][0]), (idt_extent[1][1] + v1_y+pad_tapery)),
+                 ((pad_xoffset+10), (idt_extent[1][1]+v1_y+pad_tapery)),
+                 ((pad_xoffset+10), (idt_extent[1][1] + v1_y+pad_tapery)+20),
+                 ((pad_xoffset2+pad_extent[1][0])+100, (idt_extent[1][1] + v1_y+pad_tapery)+20)],
+                layers['M2']
+                ),)
+
+            # Signal connection
+            c.add(gd.Polygon(
+                [((pad_xoffset2+pad_extent[1][0]),  pad_yoffset2-35),
+                 ((pad_xoffset2+pad_extent[1][0]), pad_yoffset2+35),
+                 ((pad_xoffset2+pad_extent[1][0])+100, -(idt_extent[1][1]+v1_y+pad_tapery)),
+                 ((pad_xoffset+10), -(idt_extent[1][1]+v1_y+pad_tapery)),
+                 ((pad_xoffset+10), -(idt_extent[1][1] + v1_y+pad_tapery+20)),
+                 ((pad_xoffset2+pad_extent[1][0])+100, -(idt_extent[1][1] + v1_y+pad_tapery+20))],
+                layers['M2']
+                ),)
+
         else:
-            ground_x_offset = dev_x_extent+5
-        c.add(gd.Rectangle((i*(ground_x_offset-70), j*(idt_extent[1][1]+pad_tapery + v1_y)),
-                           (i*(ground_x_offset), -j*(idt_extent[1][1]+pad_tapery + v1_y)),
-                           layers['M2']))
-        c.add(gd.Rectangle((-i*(pad_xoffset+pad_extent[0][1]),-j*(idt_extent[1][1]+pad_tapery + v1_y)),
-                           (i*(ground_x_offset),-j*(idt_extent[1][1]+pad_tapery + v1_y+100)),
-                           layers['M2']))
+            c.add(gd.CellReference(pads,
+                                   rotation=-90,
+                                   origin=(-pad_xoffset, pad_yoffset)))
 
-        # grounded idt taper connections
-        c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
-                          (-i*(pad_xoffset+pad_extent[0][1]+70), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
-                          (-i*(pad_xoffset+pad_extent[0][1]), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
-                          (i*(pad_xoffset + n_idt*lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
-                          ], layers['M2']))
+            pad_xoffset = 0
 
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1] + v1_y)),
-                           layers['M2']))
-        c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), -j*(idt_extent[1][1])),
-                           (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), -j*(idt_extent[1][1] + v1_y)),
-                           layers['M1']))
+            for (i, j) in [(-1, 1), (1, -1)]:
+                # signal connection to device
+                c.add(gd.Polygon([(i*(idt_extent[0][0]-idt_offset- M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                  (i*(pad_xoffset-35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                                  (i*(pad_xoffset+35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                                  (i*(idt_extent[1][0]-idt_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                  ], layers['M2']))
+                c.add(gd.Rectangle((i*(idt_extent[0][0]-idt_offset-M2_OVERLAP), j*(idt_extent[1][1])),
+                                   (i*(idt_extent[1][0]-idt_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                                   layers['M2']))
+                c.add(gd.Rectangle((i*(idt_extent[0][0]-idt_offset), j*(idt_extent[1][1])),
+                                   (i*(idt_extent[1][0]-idt_offset), j*(idt_extent[1][1] + v1_y)),
+                                   layers['M1']))
+
+            # ground pad to pad connections
+            if pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2-70 > dev_x_extent+5:
+                ground_x_offset = pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2
+            else:
+                ground_x_offset = dev_x_extent+5
+
+            g_taper = gd.Polygon([
+                (-(ground_x_offset-70), (idt_extent[1][1]+pad_tapery+v1_y)),
+                (-((pad_xoffset+50)), -(idt_extent[1][1]+pad_tapery+v1_y)),
+                (-(pad_xoffset+70), -(idt_extent[1][1]+pad_tapery+v1_y)),
+                (-(pad_xoffset+70), -(idt_extent[1][1]+pad_tapery+v1_y)-20),
+                (-(ground_x_offset), (idt_extent[1][1]+pad_tapery+v1_y))
+                ], layers['M2']
+            )
+            c.add([g_taper, gd.copy(g_taper).mirror((0, -10), (0, 10))])
+            c.add(gd.Rectangle(((pad_xoffset+70),-(idt_extent[1][1]+pad_tapery+v1_y)-20),
+                               ((-(pad_xoffset+70),-(idt_extent[1][1]+pad_tapery+v1_y)))
+                               , layers['M2']))
+
+    else:
+        for (i, j) in [(-1, 1), (1, -1)]:
+            c.add(gd.CellReference(pads,
+                                   rotation=i*90,
+                                   origin=(i*pad_xoffset, j*pad_yoffset)))
+
+            # signal connection to device
+            c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2- M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                              (i*(pad_xoffset-35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                              (i*(pad_xoffset+35), j*(idt_extent[1][1] + v1_y+pad_tapery)),
+                              (i*(pad_xoffset + n_idt*lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                              ], layers['M2']))
+            c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2-M2_OVERLAP), j*(idt_extent[1][1])),
+                               (i*(pad_xoffset+n_idt * lmda/2 - bb_offset+M2_OVERLAP), j*(idt_extent[1][1] + v1_y)),
+                               layers['M2']))
+            c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), j*(idt_extent[1][1])),
+                               (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), j*(idt_extent[1][1] + v1_y)),
+                               layers['M1']))
+
+            # ground pad to pad connections
+            if pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2-70 > dev_x_extent+5:
+                ground_x_offset = pad_xoffset+(pad_extent[1][1]-pad_extent[0][1])/2
+            else:
+                ground_x_offset = dev_x_extent+5
+            c.add(gd.Rectangle((i*(ground_x_offset-70), j*(idt_extent[1][1]+pad_tapery + v1_y)),
+                               (i*(ground_x_offset), -j*(idt_extent[1][1]+pad_tapery + v1_y)),
+                               layers['M2']))
+            c.add(gd.Rectangle((-i*(pad_xoffset+pad_extent[0][1]),-j*(idt_extent[1][1]+pad_tapery + v1_y)),
+                               (i*(ground_x_offset),-j*(idt_extent[1][1]+pad_tapery + v1_y+100)),
+                               layers['M2']))
+
+            # grounded idt taper connections
+            c.add(gd.Polygon([(i*(pad_xoffset -n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
+                              (-i*(pad_xoffset+pad_extent[0][1]+70), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
+                              (-i*(pad_xoffset+pad_extent[0][1]), -j*(idt_extent[1][1]+pad_tapery+ v1_y)),
+                              (i*(pad_xoffset + n_idt*lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1]+ v1_y)),
+                              ], layers['M2']))
+
+            c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2 - M2_OVERLAP), -j*(idt_extent[1][1])),
+                               (i*(pad_xoffset+n_idt * lmda/2 - bb_offset + M2_OVERLAP), -j*(idt_extent[1][1] + v1_y)),
+                               layers['M2']))
+            c.add(gd.Rectangle((i*(pad_xoffset-n_idt * lmda/2), -j*(idt_extent[1][1])),
+                               (i*(pad_xoffset+n_idt * lmda/2 - bb_offset), -j*(idt_extent[1][1] + v1_y)),
+                               layers['M1']))
     # TODO: bloat signal pad taper and subtract from ground routing to prevent shorting for small lengths with reflectors?
 
     # Cell label in M2
+    # c.add(gd.Text(text_label,
+    #               9,
+    #               (-pad_xoffset-(pad_extent[1][1]-pad_extent[0][1])/2,
+    #                 pad_yoffset-pad_extent[0][0]+5),
+    #               layer=layers['M2']))
     c.add(gd.Text(text_label,
                   9,
-                  (-pad_xoffset-(pad_extent[1][1]-pad_extent[0][1])/2,
-                    pad_yoffset-pad_extent[0][0]+5),
+                  (c.get_bounding_box()[0][0],
+                   c.get_bounding_box()[1][1]+5),
                   layer=layers['M2']))
-
     return c
 
 
 def idt_cell(lib, layers, w_idt, s_idt, l_idt, n_idt, w_b, s_b, label='IDT'):
-    cellname = label+f'_wIDT{w_idt}_sIDT{s_idt}_nIDT{n_idt:.1f}_lIDT{l_idt:.1f}_wb{w_b:.1f}_sb{s_b:.1f}'
+    cellname = label+f'_wIDT{w_idt:.3f}_sIDT{s_idt:.3f}_nIDT{n_idt:.1f}_lIDT{l_idt:.1f}_wb{w_b:.1f}_sb{s_b:.1f}'
     try:
         c = lib.new_cell(cellname)
     except ValueError:
@@ -509,6 +633,28 @@ def alignment_array(lib, layers, layer, nrow=9, ncol=9, wafer_diameter=None, s_m
         c.add(objs)
     return c
 
+def IDT_test(lib, layers, label_layer, pitches, mratios):
+    c = lib.new_cell(f'IDT_test')
+    current_x = 0
+    current_y0 = 0
+    for p in pitches:
+        for mr in mratios:
+            d = idt_cell(lib, layers, mr*p, (1-mr)*p,
+                         l_idt=20*p, n_idt=5, w_b=10*p, s_b=2*p)
+            current_x = current_x+d.get_bounding_box()[1][0]-d.get_bounding_box()[0][0]+p
+            current_y = current_y0 + d.get_bounding_box()[1][1]-d.get_bounding_box()[0][1]
+            c.add(gd.CellReference(d, origin=(current_x, current_y)))
+        current_x=0
+        current_y0 = current_y0 + d.get_bounding_box()[1][1]-d.get_bounding_box()[0][1]
+       # c.add(gd.Text(f'p{p*1E3}', 21, (-10, current_y0)))  # pitch in nm
+    return c
+
+
+def mr_to_proc_bias(mr, lmda):
+    '''converts metallization ratio to process bias'''
+    return (mr-0.5)*lmda/2
+
+
 lib = gd.GdsLibrary('Resonator Library')
 gd.current_library = lib
 ds = [1, 1.5, 2, 2.5, 3, 5, 7, 10]
@@ -547,22 +693,43 @@ g_r1 = lmda1/4
 #         #                       reflector=True, g_r=.25, w_br=5, n_idtr=20, theta=60)
 #         idt_device(lib, p, layers, lmda=lmda1, g_idt=g_idt1, idt_type=i, l_idt=l_idt1, s_b=lmda1,
 #                               reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60, cell_prefix=prefixes[j])
-#     #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
+#         idt_device(lib, p, layers, lmda=lmda1, g_idt=0, idt_type=i, l_idt=l_idt1,
+#                    s_b=lmda1,
+#                    reflector=False, g_r=g_r1, w_br=3, n_idtr=50, theta=60,
+#                    cell_prefix=prefixes[j])
+    #focused_idt_cell(lib,layers,w_idt=.25,s_idt=.25,theta=60,g_idt=20,n_idt=20,w_b=10,s_b=3)
 # gd.LayoutViewer(lib)
 
 # %%
 
-lib.write_gds('test.gds')
+# lib.write_gds('test.gds')
 # %%
 #
-# lmbdas = 1E-3*np.array([50, 75, 100, 125, 150, 175, 200, 225, 250])
-# pad3 = gsg_pad(lib, layers, 'M2')
-marks = alignment_array(lib, layers, 'M0', wafer_diameter=100000)
-# for l in lmbdas:
-#     idt_device(lib, pad3, layers, lmda=l, g_idt=100*l,
-#                idt_type=IDT_Type.STANDARD,
-#                l_idt=50*l,
-#                s_b=l,
-#                cell_prefix='')
+n_idt = [10, 20]
+#lmbdas = 1E-3*np.array([100, 150, 200])
+lmbdas = 1E-3*np.array([175, 200, 225, 250, 300])
+#pad3 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
+# marks = alignment_array(lib, layers, 'M0', wafer_diameter=100000)
+
+for mr in [0.3, 0.4]:
+    for l in lmbdas:
+        for n in n_idt:
+            idt_device(lib, pads2, layers, lmda=l, g_idt=0,
+                       idt_type=IDT_Type.STANDARD,
+                       l_idt=50*l,
+                       n_idt=n,
+                       s_b=l,
+                       process_bias=mr_to_proc_bias(mr, l),
+                       cell_prefix='')
+            idt_device(lib, pads2, layers, lmda=l, g_idt=0,
+                       idt_type=IDT_Type.STANDARD,
+                       l_idt=50*l,
+                       n_idt=n,
+                       s_b=l,
+                       process_bias=mr_to_proc_bias(mr, l),
+                       pad_rot=True,
+                       cell_prefix='padrot')
+
+# IDT_test(lib, layers, 'M2', lmbdas/2, mratios=[.2, .3, .4, .5, .6])
 gd.LayoutViewer(lib)
 lib.write_gds('alignment_array.gds')
