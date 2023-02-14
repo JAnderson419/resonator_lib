@@ -902,11 +902,16 @@ ys = [20, 30, 40, 50]
 rs = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 
 layers = {
-    'Trench': 0,
+    'BG': 0,
+    'M0': 11,
     'M1': 1,
     'M2': 2,
-    'JOEL_FIELD': 50,
-    'M0': 11
+    'TeEtch': 3,
+    'FOx': 4,
+    'GOx': 5,
+    'BBox': 8,
+    'JOEL_FIELD_IDT': 50,
+    'JOEL_FIELD_PAD': 51,
 }
 
 pads = gsg_pad(lib, layers, 'M1')
