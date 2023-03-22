@@ -169,7 +169,8 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                reflector: bool = False, g_r: float = None, w_br: float = None,
                n_idtr: int = None, w_r: float = None,
                s_r: float = None, theta: float = None, connect_port_grounds=False,
-               pad_rot: int = False, cell_prefix='') -> gd.Cell:
+               pad_rot: int = False, cell_prefix='',
+               add_joel_field: bool = False) -> gd.Cell:
     """
 
     :param lib: gdspy library to add cells to
@@ -198,11 +199,12 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
         1 - rotated pads with GS taper inline with IDT
         2 - rotated pads with GS taper at angle to IDTs
     :param cell_prefix: text to add to front of cell name
+    :param add_joel_field: toggle adding bbox for EBL field definition
     :return: gdspy cell of IDT device
     """
     pad_tapery = 50  # offset distance for tapering from pad edge to IDT busbar
-    v1_y = 10
-    M2_OVERLAP = 1
+    v1_y = dr['M2_over_M1']
+    M2_OVERLAP = dr['M2_over_M1']
     dev_x_extent = 0
     cell_name = cell_prefix
 
@@ -303,26 +305,32 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
             c.add(gd.CellReference(r, origin=(r_offset, 0)))
             c.add(gd.CellReference(r, origin=(-r_offset, 0), rotation=180))
 
-    # JOEL field rectangle to prevent stitching errors in IDT
-    if idt_type != IDT_Type.OPEN:
-        cell_idt_extents = c.get_bounding_box()
-        if cell_idt_extents[1][1]-cell_idt_extents[1][0]+2*(w_b+v1_y) < 980 and \
-                cell_idt_extents[0][1]-cell_idt_extents[0][0] < 980:
-            c.add(gd.Rectangle([cell_idt_extents[0][0]-5, cell_idt_extents[0][1]-5],
-                               [cell_idt_extents[1][0]+5, cell_idt_extents[1][1]+5],
-                               layers['JOEL_FIELD']))
-        elif idt_extent[1][1]-idt_extent[1][0] < 980 and idt_extent[0][1]-idt_extent[0][
-            0] < 980:
-            c.add(gd.Rectangle(
-                [idt_extent[0][0]-5-idt_offset, idt_extent[0][1]-5-(w_b+v1_y)],
-                [idt_extent[1][0]+5-idt_offset, idt_extent[1][1]+5+(w_b+v1_y)],
-                layers['JOEL_FIELD']))
-            c.add(gd.Rectangle(
-                [idt_extent[0][0]-5+idt_offset, idt_extent[0][1]-5-(w_b+v1_y)],
-                [idt_extent[1][0]+5+idt_offset, idt_extent[1][1]+5+(w_b+v1_y)],
-                layers['JOEL_FIELD']))
-        else:
-            pass  # can't break IDT into one field.
+    if add_joel_field:
+        # TODO: fails to account for M1 generation in generate pads - move after pads and extract bbox of M1 only?
+        # JOEL field rectangle to prevent stitching errors in IDT
+        if idt_type != IDT_Type.OPEN:
+            cell_idt_extents = c.get_bounding_box()
+            if cell_idt_extents[1][1]-cell_idt_extents[1][0]+2*(w_b+v1_y) < 980 and \
+                    cell_idt_extents[0][1]-cell_idt_extents[0][0] < 980:
+                c.add(gd.Rectangle([cell_idt_extents[0][0]-5, cell_idt_extents[0][1]-5],
+                                   [cell_idt_extents[1][0]+5, cell_idt_extents[1][1]+5],
+                                   layers['JOEL_FIELD']))
+            elif idt_extent[1][1]-idt_extent[1][0] < 980 and idt_extent[0][1]-idt_extent[0][
+                0] < 980:
+                c.add(gd.Rectangle(
+                    [idt_extent[0][0]-5-idt_offset,
+                     idt_extent[0][1]-5-(w_b+v1_y)],
+                    [idt_extent[1][0]+5-idt_offset,
+                     idt_extent[1][1]+5+(w_b+v1_y)],
+                    layers['JOEL_FIELD']))
+                c.add(gd.Rectangle(
+                    [idt_extent[0][0]-5+idt_offset,
+                     idt_extent[0][1]-5-(w_b+v1_y)],
+                    [idt_extent[1][0]+5+idt_offset,
+                     idt_extent[1][1]+5+(w_b+v1_y)],
+                    layers['JOEL_FIELD']))
+            else:
+                pass  # can't break IDT into one field.
 
     # generate pads
     pad_extent = pads.get_bounding_box()
@@ -521,6 +529,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
 
             # grounded idt taper connections. For small gaps, ground connects to side
             # of v1_y busbar extension as well to prevent sharp corner.
+
             # if g_idt < 100:
             #     c.add(gd.Polygon([(i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP),
             #                        -j*(idt_extent[1][1]+v1_y)),
@@ -546,28 +555,35 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
             # if g_idt < 100:
 
             #TODO: Fix for nidt*lmda/2 > pad pitch
-            c.add(gd.Polygon([(i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
-                               -j*(idt_extent[1][1]+v1_y)),
-                              (i*(pad_xoffset+pad_extent[1][1]-70),
-                               j*(idt_extent[1][1]+pad_tapery+v1_y)),
-                              (i*(pad_xoffset+pad_extent[1][1]),
-                               j*(idt_extent[1][1]+pad_tapery+v1_y)),
-                              (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
-                               -j*(idt_extent[1][1]+2*v1_y)),
-                              ], layers['M2']))
+            c.add(gd.Polygon([
+                 # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
+                  (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
+                   -j*(idt_extent[1][1])),
+                  (i*(pad_xoffset+pad_extent[1][1]-70),
+                   j*(idt_extent[1][1]+pad_tapery+v1_y)),
+                  (i*(pad_xoffset+pad_extent[1][1]),
+                   j*(idt_extent[1][1]+pad_tapery+v1_y)),
+                  (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
+                 # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
+                   -j*(idt_extent[1][1]+2*v1_y)),
+                  ], layers['M2']))
             c.add(gd.Rectangle(
-                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP), -j*(idt_extent[1][1])),
+                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP),
+                 -j*(idt_extent[1][1])),
                 (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
                  -j*(idt_extent[1][1]+v1_y)),
                 layers['M2']))
             c.add(gd.Polygon([
-                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP+v1_y/np.arctan(pad_tapery/(35-n_idt*lmda/4))), -j*(idt_extent[1][1]+2*v1_y)),
-                (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
+                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP+v1_y/np.arctan(pad_tapery/(35-n_idt*lmda/4))),
                  -j*(idt_extent[1][1]+2*v1_y)),
-                (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][
-                    0]),
+                (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
+                # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
+                 -j*(idt_extent[1][1]+2*v1_y)),
+                (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
+                # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
                  -j*(idt_extent[1][1]+v1_y)),
-                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP), -j*(idt_extent[1][1]+v1_y)),
+                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP),
+                 -j*(idt_extent[1][1]+v1_y)),
             ],
                 layers['M2']))
             if idt_type == IDT_Type.OPEN:
@@ -758,8 +774,43 @@ def split_finger_cell(lib, layers, lmda, process_bias, l_idt, n_idt, w_b, s_b):
     return c
 
 
+def alignment_vernier(lib, layers, layer1, layer2, lw=2.5, increment=0.1, ar=10):
+    c = lib.new_cell(f'Alignment_Vernier_{layer1}_{layer2}')
+    nlines = lw/increment
+    if nlines == int(nlines):
+        nlines = int(nlines)
+    else:
+        raise ValueError(f'{nlines} is not an integer number of marks')
+    for i in np.linspace(-nlines, nlines, 2*nlines+1):
+        # Layer 2
+        if i % 5 == 0:
+            ar1 = .5  # longer vernier every 5
+        else:
+            ar1 = 0.1
+        c.add(gd.Rectangle((-ar*lw/2, (i-1/2)*(2*lw+increment)+increment/2),
+                           (ar1*ar*lw/2, (i-1/2)*(2*lw+increment)+increment/2+lw),
+                           layers[layer2]))
+        # Layer 1
+        if i == nlines:
+            continue  # need one less line than first layer
+        else:
+
+            if i == -1 or i == 0:
+                ar2 = -0.5
+            else:
+                ar2 = -0.1
+            c.add(gd.Rectangle((ar2*ar*lw/2, i*2*lw),
+                               (ar*lw/2, (i*2*lw)+lw),
+                               layers[layer1]))
+    for i in [-nlines-1, nlines]:
+        c.add(gd.Rectangle((-0.25*ar*lw/2, i*2*lw),
+                       (ar*lw/2, (i*2*lw)+lw),
+                       layers[layer1]))
+
+    return c
 # WIP
-def alignment_marks(lib, layers, layer, l=250, w=5, w2=5, cell_prefix=''):
+def alignment_marks(lib, layers, layer, l=250, w=5, w2=5, cell_prefix='',
+                    vernier_layer=None,):
     '''
     Create alignment cross mark.
     5 x 250 recommended for JOEL 8100 PQRS.
@@ -772,11 +823,14 @@ def alignment_marks(lib, layers, layer, l=250, w=5, w2=5, cell_prefix=''):
     :param w: width of marks at center/tips
     :param w2: width of marks in 1/8 to 3/8 region of length
     :param cell_prefix:
+    :param vernier_layer: layer for alignment verniers
     :return: c: cell containing alignment mark
     '''
     #
-
-    c = lib.new_cell(cell_prefix+f'Alignment_Mark_Layer{layer}')
+    if vernier_layer:
+        c = lib.new_cell(cell_prefix+f'Alignment_Mark_Layer{layer}_Vernier{vernier_layer}')
+    else:
+        c = lib.new_cell(cell_prefix+f'Alignment_Mark_Layer{layer}')
     c.add(gd.Rectangle((-l/2, -w/2), (-3*l/8, w/2), layers[layer]))
     c.add(gd.Rectangle((-3*l/8, -w2/2), (-l/8, w2/2), layers[layer]))
     c.add(gd.Rectangle((-l/8, -w/2), (l/8, w/2), layers[layer]))
@@ -788,6 +842,24 @@ def alignment_marks(lib, layers, layer, l=250, w=5, w2=5, cell_prefix=''):
     c.add(gd.Rectangle((-w/2, -l/8), (w/2, l/8), layers[layer]))
     c.add(gd.Rectangle((-w2/2, l/8), (w2/2, 3*l/8), layers[layer]))
     c.add(gd.Rectangle((- w/2, 3*l/8), (w/2, l/2), layers[layer]))
+
+    if vernier_layer:
+        vern = alignment_vernier(lib, layers, layer, vernier_layer)
+        c.add(gd.CellReference(vern, rotation=0, origin=(3*l/4, 0)))
+        c.add(gd.CellReference(vern, rotation=180, origin=(-3*l/4, 0)))
+        c.add(gd.CellReference(vern, rotation=90, origin=(0, 3*l/4)))
+        c.add(gd.CellReference(vern, rotation=270, origin=(0, -3*l/4)))
+        text_size = 40
+        c.add(gd.Text(
+                vernier_layer,
+                size=text_size,
+                position=(-l/2, 7*l/8),
+                layer=layers[layer]))
+        c.add(gd.Text(
+            f'{layers[vernier_layer]}',
+            size=text_size,
+            position=(3*l/4-text_size/2, 3*l/4-text_size),
+            layer=layers[layer]))
     return c
 
 
@@ -810,18 +882,25 @@ def alignment_array(lib, layers, layer, nrow=9, ncol=9, wafer_diameter=None,
             if (g == ncol-1) or (h == nrow-1):
                 continue
             else:
-                for i in np.linspace(0, 9, 10):
-                    for j in np.linspace(0, 9, 10):
-                        # 1mm submarks
-                        objs.append(
-                            gd.Rectangle((x+(i/10)*s_major-5, y+(j/10)*s_major-5),
-                                         (x+(i/10)*s_major+5, y+(j/10)*s_major+5),
-                                         layers[layer]))
-                        objs.append(gd.Text(f'{round(i)},{round(j)}',
-                                            size=25,
-                                            position=(x+(i/10)*s_major+20,
-                                                      y+(j/10)*s_major+20),
-                                            layer=layers[layer]))
+                for i in np.linspace(0, 10, 11):
+                    for j in np.linspace(0, 10, 11):
+                        if ((i == 10 and j == 10) or
+                            (i == 0 and j == 10) or
+                            (i == 10 and j == 0) or
+                            (i == 0 and j == 0)):
+                            continue  # skip submarks on crosshairs
+                        else:
+
+                            # 1mm submarks
+                            objs.append(
+                                gd.Rectangle((x+(i/10)*s_major-5, y+(j/10)*s_major-5),
+                                             (x+(i/10)*s_major+5, y+(j/10)*s_major+5),
+                                             layers[layer]))
+                            objs.append(gd.Text(f'{round(i)},{round(j)}',
+                                                size=25,
+                                                position=(x+(i/10)*s_major+20,
+                                                          y+(j/10)*s_major+20),
+                                                layer=layers[layer]))
                         # # 0.5mm submarks
                         # objs.append(
                         #     gd.Rectangle((x+(i/10)*s_major-3, y+(j/10+0.05)*s_major-3),
@@ -895,27 +974,37 @@ def mr_to_proc_bias(mr, lmda):
     return (mr-0.5)*lmda/2
 
 
-lib = gd.GdsLibrary('Resonator Library')
+lib = gd.GdsLibrary('Etched Resonator Library')
 gd.current_library = lib
 ds = [1, 1.5, 2, 2.5, 3, 5, 7, 10]
 ys = [20, 30, 40, 50]
 rs = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 
 layers = {
-    'BG': 0,
-    'M0': 11,
-    'M1': 1,
-    'M2': 2,
-    'TeEtch': 3,
-    'FOx': 4,
-    'GOx': 5,
+    'M0': 0,
+    'TeDep': 1,
+    'TeEtch': 2,
+    'NiEtch': 3,
+    'FOxEtch': 4,
+    'M1': 5,
+    'M2': 6,
+
     'BBox': 8,
-    'JOEL_FIELD_IDT': 50,
+    'JOEL_FIELD': 50,
     'JOEL_FIELD_PAD': 51,
 }
 
-pads = gsg_pad(lib, layers, 'M1')
-pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
+dr = {  # design rules, top layer over lower layer
+    'NiEtch_over_TeEtch': 0.25,
+    'FOxEtch_over_NiEtch': -1,
+    'FOxEtch_over_TeEtch': -1,
+    'M1_over_FOxEtch': -0.5,
+    'M2_over_M1': 0.3,
+    'M2_pullback_M1BB': 0.2
+}
+
+# pads = gsg_pad(lib, layers, 'M1')
+# pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
 # bar_resonator_matrix(lib, pads, layers, ds=ds, xs=30, ys=ys, rs=0, trench=False, yoff=10, name='matrix1')
 # bar_resonator_matrix(lib, pads, layers, rs=rs, ds=[1,2], xs=30, ys=10, yoff=4, type=Bar_Type.DISC, name='matrix2')
 
@@ -952,8 +1041,8 @@ g_r1 = lmda1/4
 n_idt = [10, 20, 40]
 # lmbdas = 1E-3*np.array([100, 150, 200])
 lmbdas = 1E-3*np.array([150, 175, 200, 250, 300, 350, 400])
-# pad3 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
-marks = alignment_array(lib, layers, 'M0', 5, 5, wafer_diameter=None)
+pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
+marks = alignment_array(lib, layers, 'M0', 2, 2, wafer_diameter=None)
 
 g_idts = [5, 10, 20, 50]
 
@@ -1001,6 +1090,7 @@ for mr in [0.3, 0.4, 0.5]:
                                    l_idt=50*l,
                                    n_idt=n,
                                    s_b=l,
+                                   w_b=dr['M2_pullback_M1BB'],
                                    process_bias=mr_to_proc_bias(mr, l),
                                    cell_prefix='')
                         # idt_device(lib, pads2, layers, lmda=l, g_idt=g,
@@ -1050,9 +1140,13 @@ for mr in [0.3, 0.4, 0.5]:
                 #            process_bias=mr_to_proc_bias(mr, l),
                 #            pad_rot=2,
                 #            cell_prefix='GS_90d')
-dcpad = dc_pad(lib, layers, 'M2')
+# dcpad = dc_pad(lib, layers, 'M2')
 # tlm(lib, layers, dcpad, 'M2', 'M1', lens=[0, 30, 80, 110])
-tlm(lib, layers, dcpad, 'M2', 'M2', lens=[0, 30, 80, 110])
-IDT_test(lib, layers, 'M2', lmbdas/2, mratios=[.3, .4, .5, .75])
+# tlm(lib, layers, dcpad, 'M2', 'M2', lens=[0, 30, 80, 110])
+# IDT_test(lib, layers, 'M2', lmbdas/2, mratios=[.3, .4, .5, .75])
+#alignment_vernier(lib, layers, 'M0', 'M1')
+
+# for k in layers:
+#     alignment_marks(lib, layers, 'M0', vernier_layer=k)
 gd.LayoutViewer(lib)
 lib.write_gds('alignment_array.gds')
