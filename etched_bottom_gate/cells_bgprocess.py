@@ -305,32 +305,6 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
             c.add(gd.CellReference(r, origin=(r_offset, 0)))
             c.add(gd.CellReference(r, origin=(-r_offset, 0), rotation=180))
 
-    if add_joel_field:
-        # TODO: fails to account for M1 generation in generate pads - move after pads and extract bbox of M1 only?
-        # JOEL field rectangle to prevent stitching errors in IDT
-        if idt_type != IDT_Type.OPEN:
-            cell_idt_extents = c.get_bounding_box()
-            if cell_idt_extents[1][1]-cell_idt_extents[1][0]+2*(w_b+v1_y) < 980 and \
-                    cell_idt_extents[0][1]-cell_idt_extents[0][0] < 980:
-                c.add(gd.Rectangle([cell_idt_extents[0][0]-5, cell_idt_extents[0][1]-5],
-                                   [cell_idt_extents[1][0]+5, cell_idt_extents[1][1]+5],
-                                   layers['JOEL_FIELD']))
-            elif idt_extent[1][1]-idt_extent[1][0] < 980 and idt_extent[0][1]-idt_extent[0][
-                0] < 980:
-                c.add(gd.Rectangle(
-                    [idt_extent[0][0]-5-idt_offset,
-                     idt_extent[0][1]-5-(w_b+v1_y)],
-                    [idt_extent[1][0]+5-idt_offset,
-                     idt_extent[1][1]+5+(w_b+v1_y)],
-                    layers['JOEL_FIELD']))
-                c.add(gd.Rectangle(
-                    [idt_extent[0][0]-5+idt_offset,
-                     idt_extent[0][1]-5-(w_b+v1_y)],
-                    [idt_extent[1][0]+5+idt_offset,
-                     idt_extent[1][1]+5+(w_b+v1_y)],
-                    layers['JOEL_FIELD']))
-            else:
-                pass  # can't break IDT into one field.
 
     # generate pads
     pad_extent = pads.get_bounding_box()
@@ -553,7 +527,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
             #                        -j*(idt_extent[1][1]+v1_y)),
             #                       ], layers['M2']))
             # if g_idt < 100:
-
+            sidetaper_ysize = 10*v1_y
             #TODO: Fix for nidt*lmda/2 > pad pitch
             c.add(gd.Polygon([
                  # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
@@ -565,7 +539,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                    j*(idt_extent[1][1]+pad_tapery+v1_y)),
                   (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
                  # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
-                   -j*(idt_extent[1][1]+2*v1_y)),
+                   -j*(idt_extent[1][1]+sidetaper_ysize)),
                   ], layers['M2']))
             c.add(gd.Rectangle(
                 (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP),
@@ -574,11 +548,11 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                  -j*(idt_extent[1][1]+v1_y)),
                 layers['M2']))
             c.add(gd.Polygon([
-                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP+v1_y/np.arctan(pad_tapery/(35-n_idt*lmda/4))),
-                 -j*(idt_extent[1][1]+2*v1_y)),
+                (i*(pad_xoffset-n_idt*lmda/2-M2_OVERLAP+sidetaper_ysize/np.arctan(pad_tapery/(35-n_idt*lmda/4))),
+                 -j*(idt_extent[1][1]+sidetaper_ysize)),
                 (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
                 # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
-                 -j*(idt_extent[1][1]+2*v1_y)),
+                 -j*(idt_extent[1][1]+sidetaper_ysize)),
                 (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP),
                 # (i*(pad_xoffset+n_idt*lmda/2-bb_offset+M2_OVERLAP+2*v1_y+idt_extent[0][0]),
                  -j*(idt_extent[1][1]+v1_y)),
@@ -594,6 +568,119 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                                  (i*(pad_xoffset+n_idt*lmda/2-bb_offset),
                                   -j*(idt_extent[1][1]+v1_y)),
                                  layers['M1']))
+
+
+    m1polys = c.get_polygons(by_spec=(layers['M1'], 0))
+    m1min = np.dstack(m1polys).min(axis=2).min(axis=0)  # [xmin, ymin]
+    m1max = np.dstack(m1polys).max(axis=2).max(axis=0)
+    cell_idt_extents = [m1min, m1max]
+
+    # IDT etch windows
+    fox_opening = gd.Rectangle(
+        [cell_idt_extents[0][0]+dr['M1BB_over_FOxEtch'],
+         cell_idt_extents[0][1]-dr['M1_inside_FOxEtch']],
+        [cell_idt_extents[1][0]-dr['M1BB_over_FOxEtch'],
+         cell_idt_extents[1][1]+dr['M1_inside_FOxEtch']],
+        layers['FOxEtch']
+    )
+    c.add(fox_opening)
+    c.add(gd.offset(fox_opening,
+                    distance=-dr['FOxEtch_over_TeEtch'],
+                    layer=layers['TeEtch']))
+    c.add(gd.offset(fox_opening,
+                    distance=-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'],
+                    layer=layers['NiEtch']))
+
+    # DC gate pad windows
+    cell_bbox = c.get_bounding_box()
+    if g_idt != 0:
+        dc_padx = -(pad_xoffset+pad_extent[0][1])+20+35
+        dc_pady = idt_extent[1][1]+v1_y+2/3*pad_tapery
+
+        dc_taperx = 0
+        dc_taperx_width = min(10, g_idt-3-2*M2_OVERLAP)
+        dc_tapery = idt_extent[1][1]+v1_y
+        dc_tapery_width = 0
+    else:
+        dc_padx = 20+35
+        dc_pady = idt_extent[1][1]+v1_y+2/3*pad_tapery
+
+        dc_taperx = cell_idt_extents[1][0]-dr['M1BB_over_FOxEtch']-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch']
+        dc_taperx_width = 0
+        dc_tapery = 0
+        dc_tapery_width = 2*(cell_idt_extents[1][1]+dr['M1_inside_FOxEtch']-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'])
+
+    dcpad = gd.Rectangle(
+        [dc_padx-35,
+          dc_pady-35],
+        [dc_padx+35,
+          dc_pady+35],
+        layers['M2']
+    )
+    c.add(dcpad)
+    c.add(gd.offset(dcpad,
+                    distance=-1,
+                    layer=layers['FOxEtch']))
+    # c.add(gd.offset(dcpad,
+    #                 distance=1,
+    #                 layer=layers['TeEtch']))
+    c.add(gd.offset(dcpad,
+                    distance=1-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'],
+                    layer=layers['NiEtch']))
+
+    # routing to DC pad
+    #TODO: fix this janky taper code to be cleaner across pitches/gaps
+
+    c.add(gd.Polygon(  # values taken from padtaper_y trapezoid
+        [((pad_xoffset/2+11),
+          (idt_extent[1][1]+v1_y+1/3*pad_tapery-5)),
+         (dc_taperx+dc_taperx_width/2,
+          dc_tapery-dc_tapery_width/2),
+         (dc_taperx-dc_taperx_width/2,
+          dc_tapery+dc_tapery_width/2),
+         # (idt_extent[1][1]+v1_y+dr['M1_inside_FOxEtch']-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'])),
+         ((pad_xoffset/2+13),
+          (idt_extent[1][1]+v1_y+1/3*pad_tapery+5)),
+         ], layers['NiEtch']))
+    c.add(gd.Polygon(
+        [((pad_xoffset/2+11),
+         idt_extent[1][1]+v1_y+1/3*pad_tapery-5),
+         ((pad_xoffset/2+13),
+          idt_extent[1][1]+v1_y+1/3*pad_tapery+5),
+         (dc_padx-35-(1-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch']),
+         idt_extent[1][1]+v1_y+2/3*pad_tapery+5),
+         (dc_padx-35-(1-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch']),
+          dc_pady-35-(1-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch']))
+         ],
+        layer=layers['NiEtch']
+    ))
+
+
+    if add_joel_field:
+        # JOEL field rectangle to prevent stitching errors in IDT
+        if idt_type != IDT_Type.OPEN:
+            if cell_idt_extents[1][1]-cell_idt_extents[1][0]+2*(w_b+v1_y) < 980 and \
+                    cell_idt_extents[0][1]-cell_idt_extents[0][0] < 980:
+                c.add(gd.Rectangle([cell_idt_extents[0][0]-5, cell_idt_extents[0][1]-5],
+                                   [cell_idt_extents[1][0]+5, cell_idt_extents[1][1]+5],
+                                   layers['JOEL_FIELD']))
+            elif idt_extent[1][1]-idt_extent[1][0] < 980 and idt_extent[0][1]-idt_extent[0][
+                0] < 980:
+                c.add(gd.Rectangle(
+                    [idt_extent[0][0]-5-idt_offset,
+                     idt_extent[0][1]-5-(w_b+v1_y)],
+                    [idt_extent[1][0]+5-idt_offset,
+                     idt_extent[1][1]+5+(w_b+v1_y)],
+                    layers['JOEL_FIELD']))
+                c.add(gd.Rectangle(
+                    [idt_extent[0][0]-5+idt_offset,
+                     idt_extent[0][1]-5-(w_b+v1_y)],
+                    [idt_extent[1][0]+5+idt_offset,
+                     idt_extent[1][1]+5+(w_b+v1_y)],
+                    layers['JOEL_FIELD']))
+            else:
+                pass  # can't break IDT into one field.
+
     # TODO: bloat signal pad taper and subtract from ground routing to prevent shorting for small lengths with reflectors?
 
     # Cell label in M2
@@ -998,7 +1085,8 @@ dr = {  # design rules, top layer over lower layer
     'NiEtch_over_TeEtch': 0.25,
     'FOxEtch_over_NiEtch': -1,
     'FOxEtch_over_TeEtch': -1,
-    'M1_over_FOxEtch': -0.5,
+    'M1_inside_FOxEtch': 0.5,
+    'M1BB_over_FOxEtch': -0.5,
     'M2_over_M1': 0.3,
     'M2_pullback_M1BB': 0.2
 }
@@ -1044,7 +1132,7 @@ lmbdas = 1E-3*np.array([150, 175, 200, 250, 300, 350, 400])
 pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
 marks = alignment_array(lib, layers, 'M0', 2, 2, wafer_diameter=None)
 
-g_idts = [5, 10, 20, 50]
+g_idts = [0, 5, 10, 20, 50]
 
 # for mr in [0.5]:  # [0.3, 0.4, 0.5, 0.75]:
 #     for l in lmbdas:
@@ -1092,7 +1180,8 @@ for mr in [0.3, 0.4, 0.5]:
                                    s_b=l,
                                    w_b=dr['M2_pullback_M1BB'],
                                    process_bias=mr_to_proc_bias(mr, l),
-                                   cell_prefix='')
+                                   cell_prefix='',
+                                   pad_rot=2)
                         # idt_device(lib, pads2, layers, lmda=l, g_idt=g,
                         #            idt_type=d,
                         #            l_idt=50*l,
