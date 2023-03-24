@@ -569,11 +569,14 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                                   -j*(idt_extent[1][1]+v1_y)),
                                  layers['M1']))
 
-
-    m1polys = c.get_polygons(by_spec=(layers['M1'], 0))
-    m1min = np.dstack(m1polys).min(axis=2).min(axis=0)  # [xmin, ymin]
-    m1max = np.dstack(m1polys).max(axis=2).max(axis=0)
-    cell_idt_extents = [m1min, m1max]
+    if idt_type == IDT_Type.OPEN:
+        #cell_idt_extents = idt_extent
+        raise NotImplementedError("OPEN not supported.")
+    else:
+        m1polys = c.get_polygons(by_spec=(layers['M1'], 0))
+        m1min = np.dstack(m1polys).min(axis=2).min(axis=0)  # [xmin, ymin]
+        m1max = np.dstack(m1polys).max(axis=2).max(axis=0)
+        cell_idt_extents = [m1min, m1max]
 
     # IDT etch windows
     fox_opening = gd.Rectangle(
@@ -591,8 +594,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
                     distance=-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'],
                     layer=layers['NiEtch']))
 
-    # DC gate pad windows
-    cell_bbox = c.get_bounding_box()
+    # DC routing
     if g_idt != 0:
         dc_padx = -(pad_xoffset+pad_extent[0][1])+20+35
         dc_pady = idt_extent[1][1]+v1_y+2/3*pad_tapery
@@ -610,6 +612,7 @@ def idt_device(lib: gd.GdsLibrary, pads: gd.Cell, layers: dict, lmda: float,
         dc_tapery = 0
         dc_tapery_width = 2*(cell_idt_extents[1][1]+dr['M1_inside_FOxEtch']-dr['NiEtch_over_TeEtch']-dr['FOxEtch_over_TeEtch'])
 
+    # DC gate pad windows
     dcpad = gd.Rectangle(
         [dc_padx-35,
           dc_pady-35],
@@ -1128,11 +1131,11 @@ g_r1 = lmda1/4
 #
 n_idt = [10, 20, 40]
 # lmbdas = 1E-3*np.array([100, 150, 200])
-lmbdas = 1E-3*np.array([150, 175, 200, 250, 300, 350, 400])
+lmbdas = 1E-3*np.array([175, 200, 250, 300, 350, 400])
 pads2 = gsg_pad(lib, layers, 'M2', connect_grounds=True)
 marks = alignment_array(lib, layers, 'M0', 2, 2, wafer_diameter=None)
 
-g_idts = [0, 5, 10, 20, 50]
+g_idts = [0, 5, 10, 20]
 
 # for mr in [0.5]:  # [0.3, 0.4, 0.5, 0.75]:
 #     for l in lmbdas:
@@ -1147,7 +1150,7 @@ g_idts = [0, 5, 10, 20, 50]
 #                        cell_prefix='GS_90d')
 for mr in [0.3, 0.4, 0.5]:
         for l in lmbdas:
-            for n in [20, 40]:
+            for n in [10, 20, 40]:
                 # idt_device(lib, pads2, layers, lmda=l, g_idt=0,
                 #           idt_type=IDT_Type.STANDARD,
                 #           l_idt=50*l,
@@ -1229,10 +1232,10 @@ for mr in [0.3, 0.4, 0.5]:
                 #            process_bias=mr_to_proc_bias(mr, l),
                 #            pad_rot=2,
                 #            cell_prefix='GS_90d')
-# dcpad = dc_pad(lib, layers, 'M2')
-# tlm(lib, layers, dcpad, 'M2', 'M1', lens=[0, 30, 80, 110])
-# tlm(lib, layers, dcpad, 'M2', 'M2', lens=[0, 30, 80, 110])
-# IDT_test(lib, layers, 'M2', lmbdas/2, mratios=[.3, .4, .5, .75])
+dcpad = dc_pad(lib, layers, 'M2')
+tlm(lib, layers, dcpad, 'M2', 'M1', lens=[0, 30, 80, 110])
+tlm(lib, layers, dcpad, 'M2', 'M2', lens=[0, 30, 80, 110])
+IDT_test(lib, layers, 'M2', lmbdas/2, mratios=[.3, .4, .5])
 #alignment_vernier(lib, layers, 'M0', 'M1')
 
 # for k in layers:
